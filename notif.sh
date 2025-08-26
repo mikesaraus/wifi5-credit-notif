@@ -15,8 +15,12 @@ fi
 
 # Default DEBUG to 0 if not set
 DEBUG=${DEBUG:-0}
+
 WIFI5="/mnt/wifi5"
+
 LOG_DIR="$WIFI5/mainlogs"
+VENDO_CONFIG="$WIFI5/config/vendo.json"
+
 INACTIVITY=2   # seconds before flushing
 
 send_telegram() {
@@ -37,7 +41,7 @@ send_telegram() {
 }
 
 get_logfile() {
-    date +$LOG_DIR/credit-%d-%m-%Y.txt
+    date +$LOG_DIR/voucher-%d-%m-%Y.txt
 }
 
 # Convert "07:22:33 pm" → seconds of day
@@ -80,15 +84,19 @@ EOF
 
     if [ -n "$new_lines" ]; then
         # Get Userinfo
+        vendo_name="*"
         user_info=""
         basefile="$WIFI5/base-id/$current_id"
         if [ -f "$basefile" ]; then
-            # extract "name" with awk (single process)
-            name=$(awk -F'"' '/"name":/ {print $4; exit}' "$basefile")
-            [ -n "$name" ] && user_info="Name: $name\n"
+            # extract client "name"
+            name=$(sed -n 's/.*"name":"\([^"]*\)".*/\1/p;q' "$basefile")
+            [ -n "$name" ] && user_info="Client: $name\n"
+        fi
+        if [ -f "$VENDO_CONFIG" ]; then
+            vendo_name=$(sed -n 's/.*"name":"\([^"]*\)".*/\1/p;q' "$VENDO_CONFIG")
         fi
 
-        send_telegram "🛜 PisoWiFi Update\n${user_info}${new_lines%\\n}"
+        send_telegram "🛜 PisoWiFi Update - ${vendo_name}\n${user_info}${new_lines%\\n}"
         [ $latest_ts -gt 0 ] && last_sent_time_sec=$latest_ts
     else
         [ $DEBUG -eq 1 ] && echo ">> No new lines to send"
