@@ -4,6 +4,10 @@
 # Resolve directory of this script
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
+# Set CHAT_ID and BOT_TOKEN via .env
+# CHAT_ID=""
+# BOT_TOKEN=""
+
 # Load .env file from same location
 if [ -f "$SCRIPT_DIR/.env" ]; then
     . "$SCRIPT_DIR/.env"
@@ -11,8 +15,8 @@ fi
 
 # Default DEBUG to 0 if not set
 DEBUG=${DEBUG:-0}
-
-LOG_DIR="/mnt/wifi5/mainlogs"
+WIFI5="/mnt/wifi5"
+LOG_DIR="$WIFI5/mainlogs"
 INACTIVITY=2   # seconds before flushing
 
 send_telegram() {
@@ -75,7 +79,16 @@ $(printf "%b" "$buffer")
 EOF
 
     if [ -n "$new_lines" ]; then
-        send_telegram "📟 PisoWiFi Update\n${new_lines%\\n}"
+        # Get Userinfo
+        user_info=""
+        basefile="$WIFI5/base-id/$current_id"
+        if [ -f "$basefile" ]; then
+            # extract "name" with awk (single process)
+            name=$(awk -F'"' '/"name":/ {print $4; exit}' "$basefile")
+            [ -n "$name" ] && user_info="Name: $name\n"
+        fi
+
+        send_telegram "🛜 PisoWiFi Update\n${user_info}${new_lines%\\n}"
         [ $latest_ts -gt 0 ] && last_sent_time_sec=$latest_ts
     else
         [ $DEBUG -eq 1 ] && echo ">> No new lines to send"
