@@ -1,5 +1,5 @@
 #!/bin/sh
-# Wifi5Soft Credit Log Notification @Telegram
+# Wifi5Soft Log Notification @Telegram
 
 # Resolve directory of this script
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
