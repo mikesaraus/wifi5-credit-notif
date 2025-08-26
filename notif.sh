@@ -1,7 +1,5 @@
 #!/bin/sh
-# Watches PisoWiFi credit logs and groups same-ID sequences
-
-DEBUG=0
+# Wifi5Soft Credit Log Notification @Telegram
 
 # Resolve directory of this script
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -10,6 +8,9 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 if [ -f "$SCRIPT_DIR/.env" ]; then
     . "$SCRIPT_DIR/.env"
 fi
+
+# Default DEBUG to 0 if not set
+DEBUG=${DEBUG:-0}
 
 LOG_DIR="/mnt/wifi5/mainlogs"
 INACTIVITY=2   # seconds before flushing
