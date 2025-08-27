@@ -96,7 +96,14 @@ EOF
             vendo_name=$(sed -n 's/.*"name":"\([^"]*\)".*/\1/p;q' "$VENDO_CONFIG")
         fi
 
-        send_telegram "🛜 PisoWiFi Update - ${vendo_name}\n${user_info}${new_lines%\\n}"
+        # Check if notification is about expired client
+        if printf "%s" "$new_lines" | grep -qi 'expired'; then
+            logo="📴 Client Expired"
+        else
+            logo="🛜 Vendo Update"
+        fi
+
+        send_telegram "${logo} - ${vendo_name}\n${user_info}${new_lines%\\n}"
         [ $latest_ts -gt 0 ] && last_sent_time_sec=$latest_ts
     else
         [ $DEBUG -eq 1 ] && echo ">> No new lines to send"
