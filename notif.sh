@@ -32,7 +32,8 @@ send_telegram() {
               -e 's/ /%20/g' \
               -e 's/!/%21/g' \
               -e 's/:/%3A/g' \
-              -e 's/,/%2C/g')
+              -e 's/,/%2C/g' \
+              -e 's/&/%26/g')
     ENC=$(printf "%s" "$ENC" | sed 's/%250A/%0A/g')
 
     URL="https://api.telegram.org/bot${BOT_TOKEN}/sendMessage"
