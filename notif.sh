@@ -96,6 +96,7 @@ EOF
             vendo_name=$(sed -n 's/.*"name":"\([^"]*\)".*/\1/p;q' "$VENDO_CONFIG")
         fi
 
+        logo="🛜"
         # Check if notification is about expired client
         if printf "%s" "$new_lines" | grep -qi 'expired'; then
             logo="📴 Client Expired"
