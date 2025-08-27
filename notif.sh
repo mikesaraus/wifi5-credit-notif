@@ -99,6 +99,8 @@ EOF
         # Check if notification is about expired client
         if printf "%s" "$new_lines" | grep -qi 'expired'; then
             logo="📴 Client Expired"
+        elif printf "%s" "$new_lines" | grep -qi 'Deducted Point'; then
+            logo="🎁 Client Redeem Points"
         else
             logo="🛜 Vendo Update"
         fi
