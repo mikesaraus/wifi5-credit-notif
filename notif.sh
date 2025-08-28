@@ -4,20 +4,18 @@
 # Resolve directory of this script
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
-# Set CHAT_ID and BOT_TOKEN via .env
-# CHAT_ID=""
-# BOT_TOKEN=""
-
 # Load .env file from same location
 if [ -f "$SCRIPT_DIR/.env" ]; then
     . "$SCRIPT_DIR/.env"
 fi
 
-# Default DEBUG to 0 if not set
+# Set CHAT_ID and BOT_TOKEN via .env
+# CHAT_ID=""
+# BOT_TOKEN=""
+
 DEBUG=${DEBUG:-0}
 
 WIFI5="/mnt/wifi5"
-
 LOG_DIR="$WIFI5/mainlogs"
 VENDO_CONFIG="$WIFI5/config/vendo.json"
 
@@ -51,7 +49,6 @@ time_to_sec() {
     IFS=: read h m s <<EOF
 $hhmmss
 EOF
-
     h="${h##0}"; [ -z "$h" ] && h=0
     m="${m##0}"; [ -z "$m" ] && m=0
     s="${s##0}"; [ -z "$s" ] && s=0
@@ -70,7 +67,7 @@ flush_buffer() {
 
     while IFS= read -r l; do
         if [ "${l:2:1}" = ":" ]; then
-            ts="${l%% *} ${l#*: }"  # crude split of time and am/pm
+            ts="${l%% *} ${l#*: }"
             sec=$(time_to_sec "${ts%% *}" "${ts##* }")
             if [ $sec -gt $last_sent_time_sec ]; then
                 new_lines="${new_lines}${l}\n"
@@ -84,12 +81,10 @@ $(printf "%b" "$buffer")
 EOF
 
     if [ -n "$new_lines" ]; then
-        # Get Userinfo
         vendo_name="*"
         user_info=""
         basefile="$WIFI5/base-id/$current_id"
         if [ -f "$basefile" ]; then
-            # extract client "name"
             name=$(sed -n 's/.*"name":"\([^"]*\)".*/\1/p;q' "$basefile")
             [ -n "$name" ] && user_info="Client: $name\n"
         fi
@@ -97,17 +92,33 @@ EOF
             vendo_name=$(sed -n 's/.*"name":"\([^"]*\)".*/\1/p;q' "$VENDO_CONFIG")
         fi
 
+        if [ -f "$VENDO_CONFIG" ]; then
+            vendo_name=$(sed -n 's/.*"name":"\([^"]*\)".*/\1/p;q' "$VENDO_CONFIG")
+        fi
+
+        ### SALES ###
+        today=$(date +%d-%m-%Y)
+        sales_file="$WIFI5/sales/list"
+        sales_today="0"
+        if [ -f "$sales_file" ]; then
+            sales_today=$(sed -n "s/.*\"$today\":\([0-9]\+\).*/\1/p" "$sales_file")
+            [ -z "$sales_today" ] && sales_today="0"
+        fi
+        sales_info="💡 Total Sales Today: ${sales_today}"
+        
         logo="🛜"
-        # Check if notification is about expired client
         if printf "%s" "$new_lines" | grep -qi 'expired'; then
-            logo="📴 Client Expired"
+            logo="📴 Session Expired"
         elif printf "%s" "$new_lines" | grep -qi 'Deducted Point'; then
-            logo="🎁 Client Redeem Points"
+            logo="🎁 Points Redeemed"
+        elif printf "%s" "$new_lines" | grep -qi 'Trial Login'; then
+            logo="⌛ Trial Login"
         else
             logo="🛜 Vendo Update"
         fi
 
-        send_telegram "${logo} - ${vendo_name}\n${user_info}${new_lines%\\n}"
+
+        send_telegram "${logo} - ${vendo_name}\n${user_info}${new_lines%\\n}\n${sales_info}"
         [ $latest_ts -gt 0 ] && last_sent_time_sec=$latest_ts
     else
         [ $DEBUG -eq 1 ] && echo ">> No new lines to send"
@@ -116,23 +127,38 @@ EOF
     buffer=""
 }
 
-# State
+# --- State ---
 current_id=""
 buffer=""
 last_time=$(date +%s)
 last_sent_time_sec=0
 
 LOGFILE=$(get_logfile)
-
-# Tail the log file into a FIFO
 tmpfifo=$(mktemp -u)
 mkfifo "$tmpfifo"
 tail -n0 -F "$LOGFILE" > "$tmpfifo" &
 TAILPID=$!
 
+restart_tail() {
+    kill $TAILPID 2>/dev/null
+    rm -f "$tmpfifo"
+    tmpfifo=$(mktemp -u)
+    mkfifo "$tmpfifo"
+    tail -n0 -F "$LOGFILE" > "$tmpfifo" &
+    TAILPID=$!
+    [ $DEBUG -eq 1 ] && echo ">> Switched tail to $LOGFILE"
+}
+
 trap "kill $TAILPID; rm -f $tmpfifo" EXIT
 
 while true; do
+    # check for day change / new log file
+    new_logfile=$(get_logfile)
+    if [ "$new_logfile" != "$LOGFILE" ]; then
+        LOGFILE=$new_logfile
+        restart_tail
+    fi
+
     if read -t 1 line < "$tmpfifo"; then
         now=$(date +%s)
         id=$(echo "$line" | sed -n 's/.*ID: \([^ ]*\).*/\1/p')
@@ -142,6 +168,7 @@ while true; do
             current_id="$id"
             buffer="$line"
         elif [ "$id" = "$current_id" ]; then
+            [ $DEBUG -eq 1 ] && echo ">> Same ID: $id"
             buffer="${buffer}\n${line}"
         else
             [ $DEBUG -eq 1 ] && echo ">> New ID: $id"
@@ -149,7 +176,6 @@ while true; do
             current_id="$id"
             buffer="$line"
         fi
-
         last_time=$now
     else
         now=$(date +%s)
