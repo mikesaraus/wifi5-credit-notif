@@ -100,11 +100,11 @@ EOF
         today=$(date +%d-%m-%Y)
         sales_file="$WIFI5/sales/list"
         sales_today="0"
+        sales_info=""
         if [ -f "$sales_file" ]; then
             sales_today=$(sed -n "s/.*\"$today\":\([0-9]\+\).*/\1/p" "$sales_file")
             [ -z "$sales_today" ] && sales_today="0"
         fi
-        sales_info="💡 Total Sales Today: ${sales_today}"
         
         logo="🛜"
         if printf "%s" "$new_lines" | grep -qi 'expired'; then
@@ -115,10 +115,10 @@ EOF
             logo="⌛ Trial Login"
         else
             logo="🛜 Vendo Update"
+            sales_info="\n💡 Total Sales Today: ${sales_today}"
         fi
 
-
-        send_telegram "${logo} - ${vendo_name}\n${user_info}${new_lines%\\n}\n${sales_info}"
+        send_telegram "${logo} - ${vendo_name}\n${user_info}${new_lines%\\n}${sales_info}"
         [ $latest_ts -gt 0 ] && last_sent_time_sec=$latest_ts
     else
         [ $DEBUG -eq 1 ] && echo ">> No new lines to send"
