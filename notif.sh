@@ -115,7 +115,7 @@ EOF
             logo="⌛ Trial Login"
         else
             logo="🛜 Vendo Update"
-            sales_info="\n💡 Total Sales Today: ${sales_today}"
+            sales_info="\n💡 Total Sales Today: ₱ ${sales_today}.00"
         fi
 
         send_telegram "${logo} - ${vendo_name}\n${user_info}${new_lines%\\n}${sales_info}"
