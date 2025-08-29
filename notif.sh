@@ -18,6 +18,7 @@ DEBUG=${DEBUG:-0}
 WIFI5="/mnt/wifi5"
 LOG_DIR="$WIFI5/mainlogs"
 VENDO_CONFIG="$WIFI5/config/vendo.json"
+SALES_FILE="$WIFI5/sales/list"
 
 INACTIVITY=2   # seconds before flushing
 
@@ -81,17 +82,13 @@ $(printf "%b" "$buffer")
 EOF
 
     if [ -n "$new_lines" ]; then
-        vendo_name="*"
         user_info=""
         basefile="$WIFI5/base-id/$current_id"
         if [ -f "$basefile" ]; then
             name=$(sed -n 's/.*"name":"\([^"]*\)".*/\1/p;q' "$basefile")
             [ -n "$name" ] && user_info="Client: $name\n"
         fi
-        if [ -f "$VENDO_CONFIG" ]; then
-            vendo_name=$(sed -n 's/.*"name":"\([^"]*\)".*/\1/p;q' "$VENDO_CONFIG")
-        fi
-
+        vendo_name="*"
         if [ -f "$VENDO_CONFIG" ]; then
             vendo_name=$(sed -n 's/.*"name":"\([^"]*\)".*/\1/p;q' "$VENDO_CONFIG")
         fi
@@ -107,16 +104,15 @@ EOF
         else
             ### SALES ###
             today=$(date +%d-%m-%Y)
-            sales_file="$WIFI5/sales/list"
             sales_today="0"
-            if [ -f "$sales_file" ]; then
-                sales_today=$(sed -n "s/.*\"$today\":\([0-9]\+\).*/\1/p" "$sales_file")
+            if [ -f "$SALES_FILE" ]; then
+                sales_today=$(sed -n "s/.*\"$today\":\([0-9]\+\).*/\1/p" "$SALES_FILE")
                 [ -z "$sales_today" ] && sales_today="0"
             fi
             sales_info="\n💡 Total Sales Today: ₱ ${sales_today}.00"
         fi
 
-        send_telegram "${logo} - ${vendo_name}\n${user_info}${new_lines%\\n}${sales_info}"
+        send_telegram "${logo} - ${vendo_name}\n${user_info}${new_lines%\\n}${sales_info}${ngrok_info}"
         [ $latest_ts -gt 0 ] && last_sent_time_sec=$latest_ts
     else
         [ $DEBUG -eq 1 ] && echo ">> No new lines to send"
@@ -160,7 +156,16 @@ while true; do
     if read -t 1 line < "$tmpfifo"; then
         now=$(date +%s)
         id=$(echo "$line" | sed -n 's/.*ID: \([^ ]*\).*/\1/p')
-
+        
+        # Get ngrok public URL
+        ngrok_url=$(wget -qO- http://127.0.0.1:4040/api/tunnels 2>/dev/null \
+            | grep -o '"public_url":"[^"]*"' \
+            | cut -d'"' -f4 \
+            | head -n1)
+        
+        ngrok_info=""
+        [ -n "$ngrok_url" ] && ngrok_info="\n🔗 ${ngrok_url}" || ngrok_info=""
+    
         if [ -z "$current_id" ]; then
             [ $DEBUG -eq 1 ] && echo ">> First ID: $id"
             current_id="$id"
