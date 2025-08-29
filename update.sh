@@ -14,7 +14,7 @@ if [ "$AUTO_KILL" -eq 1 ]; then
     done
 else
     echo "=== Current notif.sh processes ==="
-    ps | grep "notif.sh" | grep -v "grep"
+    ps | grep "$NOTIF" | grep -v "grep"
 
     echo ""
     echo -n "Enter PID to kill (or press Enter to skip): "
