@@ -95,18 +95,9 @@ EOF
         if [ -f "$VENDO_CONFIG" ]; then
             vendo_name=$(sed -n 's/.*"name":"\([^"]*\)".*/\1/p;q' "$VENDO_CONFIG")
         fi
-
-        ### SALES ###
-        today=$(date +%d-%m-%Y)
-        sales_file="$WIFI5/sales/list"
-        sales_today="0"
-        sales_info=""
-        if [ -f "$sales_file" ]; then
-            sales_today=$(sed -n "s/.*\"$today\":\([0-9]\+\).*/\1/p" "$sales_file")
-            [ -z "$sales_today" ] && sales_today="0"
-        fi
         
-        logo="🛜"
+        logo="🛜 Vendo Update"
+        sales_info=""
         if printf "%s" "$new_lines" | grep -qi 'expired'; then
             logo="📴 Session Expired"
         elif printf "%s" "$new_lines" | grep -qi 'Deducted Point'; then
@@ -114,7 +105,14 @@ EOF
         elif printf "%s" "$new_lines" | grep -qi 'Trial Login'; then
             logo="⌛ Trial Login"
         else
-            logo="🛜 Vendo Update"
+            ### SALES ###
+            today=$(date +%d-%m-%Y)
+            sales_file="$WIFI5/sales/list"
+            sales_today="0"
+            if [ -f "$sales_file" ]; then
+                sales_today=$(sed -n "s/.*\"$today\":\([0-9]\+\).*/\1/p" "$sales_file")
+                [ -z "$sales_today" ] && sales_today="0"
+            fi
             sales_info="\n💡 Total Sales Today: ₱ ${sales_today}.00"
         fi
 
