@@ -93,14 +93,14 @@ EOF
             vendo_name=$(sed -n 's/.*"name":"\([^"]*\)".*/\1/p;q' "$VENDO_CONFIG")
         fi
         
-        logo="🛜 Vendo Update"
+        title="🛜 ${vendo_name} - Vendo Update"
         sales_info=""
         if printf "%s" "$new_lines" | grep -qi 'expired'; then
-            logo="📴 Session Expired"
+            title="📴 ${vendo_name} - Session Expired"
         elif printf "%s" "$new_lines" | grep -qi 'Deducted Point'; then
-            logo="🎁 Points Redeemed"
+            title="🎁 ${vendo_name} - Points Redeemed"
         elif printf "%s" "$new_lines" | grep -qi 'Trial Login'; then
-            logo="⌛ Trial Login"
+            title="⌛ ${vendo_name} - Trial Login"
         else
             ### SALES ###
             today=$(date +%d-%m-%Y)
@@ -112,7 +112,7 @@ EOF
             sales_info="\n💡 Total Sales Today: ₱ ${sales_today}.00"
         fi
 
-        send_telegram "${logo} - ${vendo_name}\n${user_info}${new_lines%\\n}${sales_info}${ngrok_info}"
+        send_telegram "${title}\n${user_info}${new_lines%\\n}${sales_info}${ngrok_info}"
         [ $latest_ts -gt 0 ] && last_sent_time_sec=$latest_ts
     else
         [ $DEBUG -eq 1 ] && echo ">> No new lines to send"
