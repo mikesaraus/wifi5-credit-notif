@@ -89,20 +89,23 @@ EOF
 
 flush_buffer() {
     [ -z "$buffer" ] && return
-
     debug_log "Flushing buffer for ID: $current_id"
     new_lines=""
     latest_ts=0
 
+    system_log "DEBUG: last_sent_time_sec=$last_sent_time_sec, new_lines count=$(echo -n "$new_lines" | grep -c '^')"
     while IFS= read -r l; do
         if [ "${l:2:1}" = ":" ]; then
             ts="${l%% *} ${l#*: }"
             sec=$(time_to_sec "${ts%% *}" "${ts##* }")
+            debug_log "DEBUG: Line timestamp: $ts -> $sec seconds, comparing to last_sent: $last_sent_time_sec"
             if [ $sec -gt $last_sent_time_sec ]; then
                 new_lines="${new_lines}${l}\n"
                 latest_ts=$sec
+                debug_log "DEBUG: INCLUDING line (newer timestamp)"
             fi
         else
+            debug_log "DEBUG: FILTERING OUT line (older timestamp)"
             new_lines="${new_lines}${l}\n"
         fi
     done <<EOF
@@ -194,6 +197,13 @@ MAX_BUFFER_AGE=30
 debug_log "Entering main loop"
 
 while true; do
+    # Reset timestamp at midnight
+    current_hour=$(date +%H)
+    if [ "$current_hour" -eq "00" ] && [ $last_sent_time_sec -gt 0 ]; then
+        system_log "Midnight detected, resetting last_sent_time_sec"
+        last_sent_time_sec=0
+    fi
+
     if ! kill -0 $TAILPID 2>/dev/null; then
         debug_log "Tail process died, restarting..."
         restart_tail
