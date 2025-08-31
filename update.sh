@@ -29,6 +29,17 @@ setup_cron_job() {
     fi
 }
 
+# Function to remove cron job
+remove_cron_job() {
+    echo "Removing cron job..."
+    if crontab -l 2>/dev/null | grep -q "$CRON_JOB_CMD"; then
+        crontab -l 2>/dev/null | grep -v "$CRON_JOB_CMD" | crontab -
+        echo "Cron job removed"
+    else
+        echo "No cron job found to remove"
+    fi
+}
+
 # Function to clean up service and cron job
 clean_service() {
     echo "=== Cleaning up notif service ==="
@@ -59,13 +70,7 @@ clean_service() {
     rm -f /var/run/notif.pid 2>/dev/null && echo "Removed PID file"
     
     # Remove cron job
-    echo "Removing cron job..."
-    if crontab -l 2>/dev/null | grep -q "/etc/init.d/notif restart"; then
-        crontab -l 2>/dev/null | grep -v "/etc/init.d/notif restart" | crontab -
-        echo "Cron job removed"
-    else
-        echo "No cron job found to remove"
-    fi
+    remove_cron_job
     
     echo "Cleanup completed"
     exit 0
