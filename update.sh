@@ -16,6 +16,9 @@ create_service() {
 START=99
 STOP=10
 
+EXTRA_COMMANDS="status"
+EXTRA_HELP="    status  Check if notif.sh is running"
+
 start() {
     echo "Starting notif.sh"
     /path/to/notif.sh >/dev/null 2>&1 &

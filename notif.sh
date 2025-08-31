@@ -17,7 +17,12 @@ DEBUG=${DEBUG:-0}
 
 # Debug logging function
 debug_log() {
-    [ $DEBUG -eq 1 ] && echo "$(date '+%Y-%m-%d %H:%M:%S') - $1" >> /var/log/notif.log
+    [ $DEBUG -eq 1 || ] && echo "$(date '+%Y-%m-%d %H:%M:%S') - $1" >> /var/log/notif.log
+}
+
+# System logging function
+system_log() {
+    echo "$(date '+%Y-%m-%d %H:%M:%S') - $1" >> /var/log/notif.log
 }
 
 WIFI5="/mnt/wifi5"
@@ -54,11 +59,11 @@ send_telegram() {
             debug_log "Message sent successfully"
             return 0
         else
-            debug_log "Send attempt $i failed"
+            system_log "Send attempt $i failed"
             sleep 2
         fi
     done
-    debug_log "All send attempts failed"
+    system_log "All send attempts failed"
     return 1
 }
 
@@ -163,7 +168,7 @@ tmpfifo=$(mktemp -u)
 if mkfifo "$tmpfifo" 2>/dev/null; then
     debug_log "Created FIFO: $tmpfifo"
 else
-    debug_log "Failed to create FIFO: $tmpfifo"
+    system_log "Failed to create FIFO: $tmpfifo"
     exit 1
 fi
 
@@ -221,7 +226,7 @@ while true; do
             | cut -d'"' -f4 \
             | head -n1)
         if [ -z "$ngrok_url" ]; then
-            debug_log "NGROK not available"
+            system_log "NGROK not available"
         else
             debug_log "NGROK URL: $ngrok_url"
             ngrok_info="\n🔗 ${ngrok_url}"
