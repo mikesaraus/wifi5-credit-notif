@@ -94,25 +94,37 @@ EOF
 # Buffer management
 flush_buffer() {
     [ -z "$buffer" ] && return
-    
+
     system_log "Flushing buffer for ID: $current_id"
-    local new_lines="" latest_ts=0 l ts sec ampm_part time_part
-    
-    # Process buffer content
-    while IFS= read -r l; do
+    local new_lines="" latest_ts=0 l time_part ampm_part sec
+
+    # write buffer to a temp file to avoid subshell / here-doc pitfalls
+    tmpbuf=$(mktemp) || {
+        system_log "ERROR: mktemp failed"
+        return 1
+    }
+    printf "%b" "$buffer" > "$tmpbuf" || {
+        system_log "ERROR: failed writing tmp buffer"
+        rm -f "$tmpbuf"
+        return 1
+    }
+
+    # Read the temp file in the current shell so variables persist and special chars are preserved
+    while IFS= read -r l || [ -n "$l" ]; do
         [ -z "$l" ] && continue
-        
+
         debug_log "DEBUG: Processing line: '$l'"
-        
+
         if [ "${l:2:1}" = ":" ]; then
             time_part="${l%% *}"
             ampm_part="${l#* }"
             ampm_part="${ampm_part%% *}"
-            
+            ampm_part="${ampm_part%:}"    # strip trailing colon if present
+
             sec=$(time_to_sec "$time_part" "$ampm_part")
             debug_log "DEBUG: Line timestamp: $time_part $ampm_part -> $sec seconds, comparing to last_sent: $last_sent_time_sec"
-            
-            if [ $last_sent_time_sec -eq 0 ] || [ $sec -gt $last_sent_time_sec ]; then
+
+            if [ "$last_sent_time_sec" -eq 0 ] || [ "$sec" -gt "$last_sent_time_sec" ]; then
                 new_lines="${new_lines}${l}\n"
                 latest_ts=$sec
                 debug_log "DEBUG: INCLUDING line (newer timestamp)"
@@ -123,12 +135,14 @@ flush_buffer() {
             new_lines="${new_lines}${l}\n"
             debug_log "DEBUG: INCLUDING line (no timestamp)"
         fi
-    done <<< "$buffer"
+    done < "$tmpbuf"
+
+    rm -f "$tmpbuf"
 
     if [ -n "$new_lines" ]; then
         local user_info="" vendo_name="*" title sales_info today sales_today name
-        
-        # Get user info
+
+        # Get user info (if available)
         local basefile="$WIFI5/base-id/$current_id"
         if [ -f "$basefile" ] && [ -r "$basefile" ]; then
             name=$(sed -n 's/.*"name":"\([^"]*\)".*/\1/p;q' "$basefile")
@@ -136,25 +150,28 @@ flush_buffer() {
         else
             system_log "Basefile not found or not readable: $basefile"
         fi
-        
+
         # Get vendo name
         if [ -f "$VENDO_CONFIG" ] && [ -r "$VENDO_CONFIG" ]; then
             vendo_name=$(sed -n 's/.*"name":"\([^"]*\)".*/\1/p;q' "$VENDO_CONFIG")
         else
             system_log "Vendo config not found or not readable: $VENDO_CONFIG"
         fi
-        
-        # Determine message type
+
+        # Determine message title
         title="🛜 ${vendo_name} - Vendo Update"
         if printf "%s" "$new_lines" | grep -qi 'expired'; then
             title="📴 ${vendo_name} - Session Expired"
             debug_log "Session expired detected"
+            sales_info=""
         elif printf "%s" "$new_lines" | grep -qi 'Deducted Point'; then
             title="🎁 ${vendo_name} - Points Redeemed"
             debug_log "Points redeemed detected"
+            sales_info=""
         elif printf "%s" "$new_lines" | grep -qi 'Trial Login'; then
             title="⌛ ${vendo_name} - Trial Login"
             debug_log "Trial login detected"
+            sales_info=""
         else
             # Sales information
             today=$(date +%d-%m-%Y)
@@ -169,12 +186,13 @@ flush_buffer() {
             debug_log "Regular update, sales today: $sales_today"
         fi
 
-        # Send message
+        # Send and update last_sent_time_sec only on success
         if send_telegram "${title}\n${user_info}${new_lines%\\n}${sales_info}${ngrok_info}"; then
-            [ $latest_ts -gt 0 ] && last_sent_time_sec=$latest_ts
+            [ "$latest_ts" -gt 0 ] && last_sent_time_sec=$latest_ts
             system_log "Buffer flushed successfully, new last_sent_time_sec: $last_sent_time_sec"
         else
             system_log "Buffer flush FAILED - keeping buffer for retry"
+            rm -f "$tmpbuf"
             return 1
         fi
     else
@@ -312,4 +330,5 @@ while true; do
             fi
         fi
     fi
+    sleep 1
 done
