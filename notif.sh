@@ -99,7 +99,7 @@ flush_buffer() {
     local new_lines="" latest_ts=0 l ts sec ampm_part time_part
     
     # Process buffer content
-    printf "%b" "$buffer" | while IFS= read -r l; do
+    while IFS= read -r l; do
         [ -z "$l" ] && continue
         
         debug_log "DEBUG: Processing line: '$l'"
@@ -123,7 +123,9 @@ flush_buffer() {
             new_lines="${new_lines}${l}\n"
             debug_log "DEBUG: INCLUDING line (no timestamp)"
         fi
-    done
+    done <<EOF
+$(printf "%b" "$buffer")
+EOF
 
     if [ -n "$new_lines" ]; then
         local user_info="" vendo_name="*" title sales_info today sales_today name
