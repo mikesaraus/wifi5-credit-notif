@@ -123,9 +123,7 @@ flush_buffer() {
             new_lines="${new_lines}${l}\n"
             debug_log "DEBUG: INCLUDING line (no timestamp)"
         fi
-    done <<EOF
-$(printf "%b" "$buffer")
-EOF
+    done <<< "$buffer"
 
     if [ -n "$new_lines" ]; then
         local user_info="" vendo_name="*" title sales_info today sales_today name
