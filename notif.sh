@@ -138,6 +138,7 @@ EOF
         else
             system_log "Basefile not found or not readable: $basefile"
         fi
+        [ -z "$user_info" ] && [ -n "$current_id" ] && user_info="Client: U-$current_id\n"
         
         # Get vendo name
         if [ -f "$VENDO_CONFIG" ] && [ -r "$VENDO_CONFIG" ]; then
