@@ -134,7 +134,7 @@ EOF
         local basefile="$WIFI5/base-id/$current_id"
         if [ -f "$basefile" ] && [ -r "$basefile" ]; then
             name=$(sed -n 's/.*"name":"\([^"]*\)".*/\1/p;q' "$basefile")
-            [ -n "$name" ] && user_info="Client: $name\n"
+            [ -n "$name" ] && user_info="Client: $name (U-$current_id)\n"
         else
             system_log "Basefile not found or not readable: $basefile"
         fi
@@ -173,7 +173,7 @@ EOF
         fi
 
         # Send message
-        if send_telegram "${title}\n${user_info}${sales_info}${ngrok_info}"; then
+        if send_telegram "${title}\n${user_info}${new_lines%\\n}${sales_info}${ngrok_info}"; then
             [ $latest_ts -gt 0 ] && last_sent_time_sec=$latest_ts
             system_log "Buffer flushed successfully, new last_sent_time_sec: $last_sent_time_sec"
         else
@@ -283,18 +283,19 @@ while true; do
         fi
 
         # Buffer management
+        cleaned=$(echo "$line" | sed 's/^.* [0-9A-Fa-f:]\{17\} //')
         if [ -z "$current_id" ]; then
             current_id="$id"
-            buffer="$line"
+            buffer="$cleaned"
             system_log "New session started with ID: $current_id"
         elif [ "$id" = "$current_id" ]; then
-            buffer="${buffer}\n${line}"
+            buffer="${buffer}\n${cleaned}"
             debug_log "Added to existing buffer for ID: $current_id"
         else
             system_log "ID changed from $current_id to $id, flushing buffer"
             flush_buffer
             current_id="$id"
-            buffer="$line"
+            buffer="$cleaned"
         fi
         
         last_time=$now
