@@ -173,7 +173,7 @@ EOF
         fi
 
         # Send message
-        if send_telegram "${title}\n${user_info}${new_lines%\\n}${sales_info}${ngrok_info}"; then
+        if send_telegram "${title}\n${user_info}${sales_info}${ngrok_info}"; then
             [ $latest_ts -gt 0 ] && last_sent_time_sec=$latest_ts
             system_log "Buffer flushed successfully, new last_sent_time_sec: $last_sent_time_sec"
         else
