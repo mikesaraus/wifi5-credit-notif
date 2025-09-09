@@ -153,6 +153,14 @@ EOF
     buffer=""
 }
 
+cleanup() {
+    system_log "Caught termination, flushing buffer..."
+    flush_buffer
+    exit 0
+}
+
+trap cleanup INT TERM EXIT
+
 # Main
 current_id=""
 buffer=""
@@ -181,9 +189,11 @@ check_timeouts() {
     done
 }
 
+# Start timeout checker in background
 check_timeouts &
 
-tail -n0 -F "$LOGFILE" | while read -r line; do
+# Read logfile with process substitution
+while read -r line; do
     now=$(date +%s)
     id=$(echo "$line" | sed -n 's/.*ID: \([^ ]*\).*/\1/p')
     debug_log "New line: ${line:0:50}..., ID: $id"
@@ -198,7 +208,7 @@ tail -n0 -F "$LOGFILE" | while read -r line; do
         system_log "NGROK not available"
     fi
 
-    cleaned=$(echo "$line" | sed 's/^.* [0-9A-Fa-f:]\{17\} //')
+    cleaned=$(echo "$line" | sed 's/^.* [0-9A-Za-z:]\{17\} //')
     if [ -z "$current_id" ]; then
         current_id="$id"
         buffer="$cleaned"
@@ -214,5 +224,5 @@ tail -n0 -F "$LOGFILE" | while read -r line; do
     fi
 
     last_time=$now
-done
+done < <(tail -n0 -F "$LOGFILE")
 
