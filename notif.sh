@@ -163,6 +163,26 @@ LOGFILE=$(get_logfile)
 system_log "Initial logfile: $LOGFILE"
 system_log "Entering main loop"
 
+check_timeouts() {
+    local interval=$(( INACTIVITY < MAX_BUFFER_AGE ? INACTIVITY : MAX_BUFFER_AGE ))
+    while true; do
+        now=$(date +%s)
+        # Flush checks
+        if [ -n "$buffer" ]; then
+            if [ $((now - last_time)) -ge $INACTIVITY ]; then
+                system_log "Inactivity flush triggered"
+                flush_buffer; current_id=""
+            elif [ $((now - last_time)) -ge $MAX_BUFFER_AGE ]; then
+                system_log "Max buffer age flush triggered"
+                flush_buffer; current_id=""
+            fi
+        fi
+        sleep $interval
+    done
+}
+
+check_timeouts &
+
 tail -n0 -F "$LOGFILE" | while read -r line; do
     now=$(date +%s)
     id=$(echo "$line" | sed -n 's/.*ID: \([^ ]*\).*/\1/p')
@@ -194,15 +214,5 @@ tail -n0 -F "$LOGFILE" | while read -r line; do
     fi
 
     last_time=$now
-
-    # Flush checks
-    if [ -n "$buffer" ]; then
-        if [ $((now - last_time)) -ge $INACTIVITY ]; then
-            system_log "Inactivity flush triggered"
-            flush_buffer; current_id=""
-        elif [ $((now - last_time)) -ge $MAX_BUFFER_AGE ]; then
-            system_log "Max buffer age flush triggered"
-            flush_buffer; current_id=""
-        fi
-    fi
 done
+
