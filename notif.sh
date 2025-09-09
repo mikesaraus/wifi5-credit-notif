@@ -171,58 +171,54 @@ LOGFILE=$(get_logfile)
 system_log "Initial logfile: $LOGFILE"
 system_log "Entering main loop"
 
-check_timeouts() {
-    local interval=$(( INACTIVITY < MAX_BUFFER_AGE ? INACTIVITY : MAX_BUFFER_AGE ))
-    while true; do
+# Read logfile with process substitution
+while read -r line; do
+    if read -t 1 -r line; then
         now=$(date +%s)
-        # Flush checks
+        id=$(echo "$line" | sed -n 's/.*ID: \([^ ]*\).*/\1/p')
+        debug_log "New line: ${line:0:50}..., ID: $id"
+
+        ngrok_info=""
+        ngrok_url=$(wget -T 5 -qO- http://127.0.0.1:4040/api/tunnels 2>/dev/null \
+            | grep -o '"public_url":"[^"]*"' | cut -d'"' -f4 | head -n1)
+        if [ -n "$ngrok_url" ]; then
+            ngrok_info="\n🔗 ${ngrok_url}"
+            debug_log "NGROK URL: $ngrok_url"
+        else
+            system_log "NGROK not available"
+        fi
+
+        cleaned=$(echo "$line" | sed 's/^.* [0-9A-Za-z:]\{17\} //')
+        if [ -z "$current_id" ]; then
+            current_id="$id"
+            buffer="$cleaned"
+            system_log "New session started with ID: $current_id"
+        elif [ "$id" = "$current_id" ]; then
+            buffer="${buffer}\n${cleaned}"
+            debug_log "Added to buffer for ID: $current_id"
+        else
+            system_log "ID changed from $current_id to $id, flushing buffer"
+            flush_buffer
+            current_id="$id"
+            buffer="$cleaned"
+        fi
+
+        last_time=$now
+
+    else
+        # No line within 1 second → check timeout conditions
+        now=$(date +%s)
         if [ -n "$buffer" ]; then
             if [ $((now - last_time)) -ge $INACTIVITY ]; then
                 system_log "Inactivity flush triggered"
-                flush_buffer; current_id=""
+                flush_buffer
+                current_id=""
             elif [ $((now - last_time)) -ge $MAX_BUFFER_AGE ]; then
                 system_log "Max buffer age flush triggered"
-                flush_buffer; current_id=""
+                flush_buffer
+                current_id=""
             fi
         fi
-        sleep $interval
-    done
-}
-
-# Start timeout checker in background
-check_timeouts &
-
-# Read logfile with process substitution
-while read -r line; do
-    now=$(date +%s)
-    id=$(echo "$line" | sed -n 's/.*ID: \([^ ]*\).*/\1/p')
-    debug_log "New line: ${line:0:50}..., ID: $id"
-
-    ngrok_info=""
-    ngrok_url=$(wget -T 5 -qO- http://127.0.0.1:4040/api/tunnels 2>/dev/null \
-        | grep -o '"public_url":"[^"]*"' | cut -d'"' -f4 | head -n1)
-    if [ -n "$ngrok_url" ]; then
-        ngrok_info="\n🔗 ${ngrok_url}"
-        debug_log "NGROK URL: $ngrok_url"
-    else
-        system_log "NGROK not available"
     fi
-
-    cleaned=$(echo "$line" | sed 's/^.* [0-9A-Za-z:]\{17\} //')
-    if [ -z "$current_id" ]; then
-        current_id="$id"
-        buffer="$cleaned"
-        system_log "New session started with ID: $current_id"
-    elif [ "$id" = "$current_id" ]; then
-        buffer="${buffer}\n${cleaned}"
-        debug_log "Added to buffer for ID: $current_id"
-    else
-        system_log "ID changed from $current_id to $id, flushing buffer"
-        flush_buffer
-        current_id="$id"
-        buffer="$cleaned"
-    fi
-
-    last_time=$now
 done < <(tail -n0 -F "$LOGFILE")
 
