@@ -105,11 +105,19 @@ EOF
         fi
         [ -z "$user_info" ] && [ -n "$current_id" ] && user_info="Client: U-$current_id\\n"
 
-        if [ -f "$VENDO_CONFIG" ] && [ -r "$VENDO_CONFIG" ]; then
-            vendo_name=$(sed -n 's/.*"name":"\([^"]*\)".*/\1/p;q' "$VENDO_CONFIG")
-        else
-            vendo_name="*"
-            system_log "Vendo config not found: $VENDO_CONFIG"
+        # Vendo Name / Profile
+        profile=$(printf "%s" "$new_lines" | grep -i -m1 'Profile:' 2>/dev/null | sed 's/^[[:space:]]*//; s/[[:space:]]*$//; s/^[Pp]rofile:[[:space:]]*//')
+
+        if [ -n "$profile" ]; then
+            # Remove surrounding quotes if any, trim again
+            profile=$(printf "%s" "$profile" | sed 's/^"//; s/"$//; s/[[:space:]]*$//; s/^[[:space:]]*//')
+            if [ -n "$profile" ]; then
+                vendo_name="$profile"
+                debug_log "Vendo name extracted from log Profile: $vendo_name"
+            else
+                vendo_name="PISOWIFI"
+                debug_log "No vendo name in Profile, falling back to default"
+            fi
         fi
 
         title="🛜 ${vendo_name} - Vendo Update"
@@ -129,6 +137,17 @@ EOF
                 system_log "Sales file not found: $SALES_FILE"
             fi
             sales_info="\\n💡 Total Sales Today: ₱ ${sales_today}.00"
+        fi
+
+        # NGROK info (if available)
+        ngrok_info=""
+        ngrok_url=$(wget -T 5 -qO- http://127.0.0.1:4040/api/tunnels 2>/dev/null \
+            | grep -o '"public_url":"[^"]*"' | cut -d'"' -f4 | head -n1)
+        if [ -n "$ngrok_url" ]; then
+            ngrok_info="\\n🔗 ${ngrok_url}"
+            debug_log "NGROK URL: $ngrok_url"
+        else
+            debug_log "NGROK not available"
         fi
 
         # remove trailing literal \n
