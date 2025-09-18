@@ -209,7 +209,7 @@ EOF
             | grep -i -m1 'Profile:' 2>/dev/null \
             | sed -E 's/.*[Pp]rofile:[[:space:]]*//; s/^"//; s/"$//; s/[[:space:]]*$//')
         if [ -n "$profile" ]; then
-            profile=$(printf "%s" "$profile" | sed 's/^"//; s/"$//' | tr -d '\r\n')
+            profile=$(printf "%s" "$profile" | sed 's/\\n//g' | tr -d '\r' | awk 'NR==1{printf "%s",$0; exit}')
             if [ -n "$profile" ]; then
                 vendo_name="$profile"
                 debug_log "Vendo name extracted from log Profile: $vendo_name"
