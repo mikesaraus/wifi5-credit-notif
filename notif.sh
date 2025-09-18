@@ -106,7 +106,9 @@ EOF
         [ -z "$user_info" ] && [ -n "$current_id" ] && user_info="Client: U-$current_id\\n"
 
         # Vendo Name / Profile
-        profile=$(printf "%s" "$new_lines" | grep -i -m1 'Profile:' 2>/dev/null | sed 's/^[[:space:]]*//; s/[[:space:]]*$//; s/^[Pp]rofile:[[:space:]]*//')
+        profile=$(printf "%s" "$new_lines" \
+            | grep -i -m1 'Profile:' \
+            | sed -E 's/.*[Pp]rofile:[[:space:]]*//; s/^"//; s/"$//; s/[[:space:]]*$//')
 
         if [ -n "$profile" ]; then
             # Remove surrounding quotes if any, trim again
@@ -119,6 +121,51 @@ EOF
                 debug_log "No vendo name in Profile, falling back to default"
             fi
         fi
+
+        vendo_name=""
+        
+        if [ -f "$VENDO_CONFIG" ] && [ -r "$VENDO_CONFIG" ]; then
+            if [ -r /usr/share/libubox/jshn.sh ]; then
+                . /usr/share/libubox/jshn.sh
+
+                # load JSON and try to descend into sub -> main -> name
+                if json_load "$(cat "$VENDO_CONFIG")" >/dev/null 2>&1; then
+                    if json_select "sub" >/dev/null 2>&1 && json_select "main" >/dev/null 2>&1; then
+                        # read "name" into variable vendo_name
+                        if json_get_var vendo_name "name" >/dev/null 2>&1; then
+                            debug_log "jshn: found vendo_name='$vendo_name'"
+                        else
+                            debug_log "jshn: 'name' not found under sub->main"
+                            vendo_name=""
+                        fi
+                    else
+                        debug_log "jshn: could not select sub->main"
+                    fi
+                else
+                    debug_log "jshn: json_load failed for $VENDO_CONFIG"
+                fi
+            else
+                debug_log "/usr/share/libubox/jshn.sh not found; falling back to sed"
+            fi
+
+            # fallback: if jshn failed, try original sed extraction (first "name" occurrence)
+            if [ -z "$vendo_name" ]; then
+                vendo_name=$(sed -n 's/.*"name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$VENDO_CONFIG" 2>/dev/null | head -n1)
+                [ -n "$vendo_name" ] && debug_log "Vendo name extracted by sed fallback: $vendo_name" || system_log "Vendo name not found in config"
+            fi
+        else
+            system_log "Vendo config not found: $VENDO_CONFIG"
+        fi
+
+        # final cleanup: trim whitespace and remove surrounding quotes / control chars
+        if [ -n "$vendo_name" ]; then
+            # remove leading/trailing whitespace and surrounding quotes if present
+            vendo_name=$(printf "%s" "$vendo_name" | sed -e 's/^[[:space:]]*//; s/[[:space:]]*$//' -e 's/^"//; s/"$//')
+        else
+            vendo_name="*"
+        fi
+
+        debug_log "Final vendo_name: '$vendo_name'"
 
         title="🛜 ${vendo_name} - Vendo Update"
         if printf "%s" "$new_lines" | grep -qi 'expired'; then
