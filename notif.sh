@@ -117,7 +117,7 @@ EOF
                 vendo_name="$profile"
                 debug_log "Vendo name extracted from log Profile: $vendo_name"
             else
-                vendo_name="PISOWIFI"
+                vendo_name=""
                 debug_log "No vendo name in Profile, falling back to default"
             fi
         fi
