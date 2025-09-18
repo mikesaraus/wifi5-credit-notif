@@ -146,24 +146,6 @@ EOF
     buffer=""
 }
 
-# create fifo for tail -> read -t
-FIFO="/tmp/wifi5_logfifo"
-[ -p "$FIFO" ] || { rm -f "$FIFO" 2>/dev/null; mkfifo "$FIFO"; }
-
-# start tail in background writing into the fifo
-tail -n0 -F "$LOGFILE" 2>/dev/null > "$FIFO" &
-TAIL_PID=$!
-
-# ensure cleanup of tail and fifo
-cleanup() {
-    system_log "Caught termination, flushing buffer..."
-    flush_buffer
-    [ -n "$TAIL_PID" ] && kill "$TAIL_PID" 2>/dev/null
-    rm -f "$FIFO"
-    exit 0
-}
-trap cleanup INT TERM EXIT
-
 current_id=""
 buffer=""
 last_time=$(date +%s)
@@ -173,26 +155,55 @@ LOGFILE="$(get_logfile)"
 system_log "Initial logfile: $LOGFILE"
 system_log "Entering main loop"
 
-# Main read loop: read with timeout so we can check age even when no new lines arrive
+# FIFO + tail startup (robust)
+FIFO="/tmp/wifi5_logfifo"
+if [ ! -p "$FIFO" ]; then
+    rm -f "$FIFO" 2>/dev/null
+    if ! mkfifo "$FIFO"; then
+        system_log "ERROR: mkfifo failed, falling back to direct tail read"
+        # fallback: direct tail into while (less reliable on some busybox shells)
+        tail -n0 -F "$LOGFILE" 2>/dev/null | while true; do sleep 60; done &
+        TAIL_PID=$!
+        system_log "Fallback tail started PID=$TAIL_PID"
+    else
+        system_log "FIFO created at $FIFO"
+    fi
+else
+    system_log "Using existing FIFO $FIFO"
+fi
+
+# start tail (only if FIFO was successfully created)
+if [ -p "$FIFO" ]; then
+    tail -n0 -F "$LOGFILE" 2>/dev/null > "$FIFO" &
+    TAIL_PID=$!
+    system_log "tail -F started writing to fifo (PID=$TAIL_PID)"
+fi
+
+# safe cleanup: disable traps immediately to avoid recursion
+cleanup() {
+    # ignore further INT/TERM/EXIT while cleaning up
+    trap '' INT TERM EXIT
+    system_log "Caught termination, flushing buffer..."
+    flush_buffer
+    if [ -n "$TAIL_PID" ]; then
+        system_log "Killing tail PID $TAIL_PID"
+        kill "$TAIL_PID" 2>/dev/null || true
+    fi
+    rm -f "$FIFO" 2>/dev/null
+    system_log "Cleanup complete, exiting"
+    exit 0
+}
+trap cleanup INT TERM EXIT
+
+# Main read loop: read with timeout so we wake when no input
 while true; do
     if read -t 1 -r line < "$FIFO"; then
-        # We received a new line
         now=$(date +%s)
         id=$(echo "$line" | sed -n 's/.*ID: \([^ ]*\).*/\1/p')
         debug_log "New line: ${line:0:120}..., ID: $id"
 
-        ngrok_info=""
-        ngrok_url=$(wget -T 5 -qO- http://127.0.0.1:4040/api/tunnels 2>/dev/null \
-            | grep -o '"public_url":"[^"]*"' | cut -d'"' -f4 | head -n1)
-        if [ -n "$ngrok_url" ]; then
-            ngrok_info="\\n🔗 ${ngrok_url}"
-            debug_log "NGROK URL: $ngrok_url"
-        else
-            debug_log "NGROK not available"
-        fi
-
+        # process line (same logic you already have for cleaning, buffering, id change)
         cleaned=$(echo "$line" | sed 's/^.* [0-9A-Za-z:]\{17\} //')
-
         if [ -z "$id" ]; then
             debug_log "No ID parsed from line; skipping"
             continue
@@ -203,7 +214,7 @@ while true; do
             buffer="$cleaned"
             system_log "New session started with ID: $current_id"
         elif [ "$id" = "$current_id" ]; then
-            buffer="${buffer}\\n${cleaned}"
+            buffer="${buffer}\n${cleaned}"
             debug_log "Added to buffer for ID: $current_id"
         else
             system_log "ID changed from $current_id to $id, flushing buffer"
@@ -215,10 +226,11 @@ while true; do
         last_time=$now
 
     else
-        # read timed out → no new line for 1 second. Check ages.
+        # read timed out → no new line for 1s
         now=$(date +%s)
         if [ -n "$buffer" ]; then
             age=$((now - last_time))
+            [ "$DEBUG" -eq 1 ] && debug_log "Timeout check: age=$age, INACTIVITY=$INACTIVITY, MAX_BUFFER_AGE=$MAX_BUFFER_AGE"
             if [ "$age" -ge "$MAX_BUFFER_AGE" ]; then
                 system_log "Max buffer age flush triggered (age=${age})"
                 flush_buffer
@@ -230,6 +242,8 @@ while true; do
                 current_id=""
                 last_time=$(date +%s)
             fi
+        else
+            [ "$DEBUG" -eq 1 ] && debug_log "Timeout with empty buffer"
         fi
     fi
 done
