@@ -26,17 +26,28 @@ system_log "Script started"
 system_log "SCRIPT_DIR: $SCRIPT_DIR"
 system_log "LOG_DIR: $LOG_DIR"
 
+# --- Source jshn once if available ---
+JSHN_PATH="/usr/share/libubox/jshn.sh"
+HAVE_JSHN=0
+if [ -r "$JSHN_PATH" ]; then
+    # shellcheck source=/usr/share/libubox/jshn.sh
+    . "$JSHN_PATH"
+    HAVE_JSHN=1
+    debug_log "libubox jshn loaded"
+else
+    debug_log "libubox jshn not available at $JSHN_PATH"
+fi
+# --- end jshn sourcing ---
+
 send_telegram() {
     [ -z "$1" ] && return 1
     MSG=$(printf "%b" "$1")
-    # Minimal URL-encoding suitable for application/x-www-form-urlencoded
     ENC=$(printf "%s" "$MSG" | sed -e 's/%/%25/g' -e 's/ /%20/g' -e 's/\n/%0A/g' \
                                       -e 's/!/%21/g' -e 's/:/%3A/g' -e 's/,/%2C/g' -e 's/&/%26/g')
     URL="https://api.telegram.org/bot${BOT_TOKEN}/sendMessage"
 
     system_log "Sending Telegram message: ${ENC:0:120}..."
     for i in 1 2 3; do
-        # wget on BusyBox: use --timeout (-T) and --post-data; redirect output to /dev/null
         if wget -T 10 -qO- --post-data="chat_id=${CHAT_ID}&text=${ENC}" "$URL" >/dev/null 2>&1; then
             system_log "Message sent successfully"
             return 0
@@ -50,7 +61,6 @@ send_telegram() {
 }
 
 get_logfile() {
-    # safer filename construction
     echo "$LOG_DIR/voucher-$(date +%d-%m-%Y).txt"
 }
 
@@ -66,6 +76,95 @@ EOF
     if [ "$ampm" = "am" ] && [ "$h" -eq 12 ]; then h=0; fi
     echo $((h*3600 + m*60 + s))
 }
+
+# ----------------------
+# Helper: get vendo name from config using jshn (sub->main->name)
+# Sets: echo result (stdout); returns 0 on success, 1 on failure
+get_vendo_name_from_config() {
+    local name=""
+    if [ ! -f "$VENDO_CONFIG" ] || [ ! -r "$VENDO_CONFIG" ]; then
+        return 1
+    fi
+
+    if [ "$HAVE_JSHN" -eq 1 ]; then
+        if json_load "$(cat "$VENDO_CONFIG")" >/dev/null 2>&1; then
+            if json_select "sub" >/dev/null 2>&1; then
+                if json_select "main" >/dev/null 2>&1; then
+                    if json_get_var name "name" >/dev/null 2>&1; then
+                        :
+                    else
+                        name=""
+                    fi
+                    json_select .. >/dev/null 2>&1 || true
+                fi
+                json_select .. >/dev/null 2>&1 || true
+            fi
+        fi
+    fi
+
+    # fallback sed extraction (if jshn not present or failed)
+    if [ -z "$name" ]; then
+        name=$(sed -n 's/.*"sub"[[:space:]]*:[[:space:]]*{[^}]*"main"[[:space:]]*:[[:space:]]*{[^}]*"name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$VENDO_CONFIG" 2>/dev/null | head -n1)
+    fi
+
+    # cleanup and output
+    if [ -n "$name" ]; then
+        name=$(printf "%s" "$name" | sed -e 's/^[[:space:]]*//; s/[[:space:]]*$//' -e 's/^"//; s/"$//' | tr -d '\r\n')
+        printf "%s" "$name"
+        return 0
+    fi
+    return 1
+}
+# ----------------------
+
+# ----------------------
+# Helper: get sales for today from SALES_FILE using jshn
+# Sets global main_sales and other_sales
+get_sales_today() {
+    main_sales=0
+    other_sales=0
+    today=$(date +%d-%m-%Y)
+
+    if [ ! -f "$SALES_FILE" ] || [ ! -r "$SALES_FILE" ]; then
+        return 1
+    fi
+
+    if [ "$HAVE_JSHN" -eq 1 ]; then
+        if json_load "$(cat "$SALES_FILE")" >/dev/null 2>&1; then
+            if json_get_keys vendos >/dev/null 2>&1; then
+                for v in $vendos; do
+                    if json_select "$v" >/dev/null 2>&1; then
+                        if json_get_var tmp_sales "$today" >/dev/null 2>&1; then
+                            :
+                        else
+                            tmp_sales=0
+                        fi
+                        if [ "$v" = "main" ]; then
+                            main_sales=$tmp_sales
+                        else
+                            tmp_sales=${tmp_sales:-0}
+                            other_sales=$((other_sales + tmp_sales))
+                        fi
+                        json_select .. >/dev/null 2>&1 || true
+                    fi
+                done
+            fi
+        fi
+    fi
+
+    # fallback for main_sales if it's not numeric/zero and jshn not available
+    if ! printf "%s" "$main_sales" | grep -q '^[0-9]\+$'; then
+        main_sales=$(sed -n "s/.*\"main\"[[:space:]]*:[[:space:]]*{[^}]*\"$today\":\([0-9]\+\).*/\1/p" "$SALES_FILE" 2>/dev/null | head -n1)
+        [ -z "$main_sales" ] && main_sales=$(sed -n "s/.*\"$today\":\([0-9]\+\).*/\1/p" "$SALES_FILE" 2>/dev/null | head -n1)
+        [ -z "$main_sales" ] && main_sales=0
+    fi
+
+    # ensure numeric defaults
+    main_sales=${main_sales:-0}
+    other_sales=${other_sales:-0}
+    return 0
+}
+# ----------------------
 
 flush_buffer() {
     [ -z "$buffer" ] && return
@@ -95,7 +194,7 @@ $(printf "%b" "$buffer")
 EOF
 
     if [ -n "$new_lines" ]; then
-        local user_info vendo_name title sales_info today sales_today name
+        local user_info name profile vendo_name title sales_info
         local basefile="$WIFI5/base-id/$current_id"
         if [ -f "$basefile" ] && [ -r "$basefile" ]; then
             name=$(sed -n 's/.*"name":"\([^"]*\)".*/\1/p;q' "$basefile")
@@ -105,14 +204,12 @@ EOF
         fi
         [ -z "$user_info" ] && [ -n "$current_id" ] && user_info="Client: U-$current_id\\n"
 
-        # Vendo Name / Profile
+        # Vendo Name / Profile extraction from logs
         profile=$(printf "%s" "$new_lines" \
-            | grep -i -m1 'Profile:' \
+            | grep -i -m1 'Profile:' 2>/dev/null \
             | sed -E 's/.*[Pp]rofile:[[:space:]]*//; s/^"//; s/"$//; s/[[:space:]]*$//')
-
         if [ -n "$profile" ]; then
-            # Remove surrounding quotes if any, trim again
-            profile=$(printf "%s" "$profile" | sed 's/^"//; s/"$//; s/[[:space:]]*$//; s/^[[:space:]]*//')
+            profile=$(printf "%s" "$profile" | sed 's/^"//; s/"$//' | tr -d '\r\n')
             if [ -n "$profile" ]; then
                 vendo_name="$profile"
                 debug_log "Vendo name extracted from log Profile: $vendo_name"
@@ -121,44 +218,15 @@ EOF
             fi
         fi
 
-        # If not found in logs, fall back to vendo config file (existing logic)
-        if [ -z "$vendo_name" ]; then        
-            if [ -f "$VENDO_CONFIG" ] && [ -r "$VENDO_CONFIG" ]; then
-                if [ -r /usr/share/libubox/jshn.sh ]; then
-                    . /usr/share/libubox/jshn.sh
-
-                    # load JSON and try to descend into sub -> main -> name
-                    if json_load "$(cat "$VENDO_CONFIG")" >/dev/null 2>&1; then
-                        if json_select "sub" >/dev/null 2>&1 && json_select "main" >/dev/null 2>&1; then
-                            # read "name" into variable vendo_name
-                            if json_get_var vendo_name "name" >/dev/null 2>&1; then
-                                debug_log "jshn: found vendo_name='$vendo_name'"
-                            else
-                                debug_log "jshn: 'name' not found under sub->main"
-                                vendo_name=""
-                            fi
-                        else
-                            debug_log "jshn: could not select sub->main"
-                        fi
-                    else
-                        debug_log "jshn: json_load failed for $VENDO_CONFIG"
-                    fi
-                else
-                    debug_log "/usr/share/libubox/jshn.sh not found"
-                fi
-            else
-                system_log "Vendo config not found: $VENDO_CONFIG"
-            fi
-
-            # final cleanup: trim whitespace and remove surrounding quotes / control chars
-            if [ -n "$vendo_name" ]; then
-                # remove leading/trailing whitespace and surrounding quotes if present
-                vendo_name=$(printf "%s" "$vendo_name" | sed -e 's/^[[:space:]]*//; s/[[:space:]]*$//' -e 's/^"//; s/"$//')
+        # If not found in logs, use config
+        if [ -z "$vendo_name" ]; then
+            if get_vendo_name_from_config >/dev/null 2>&1; then
+                vendo_name="$(get_vendo_name_from_config)"
+                debug_log "Vendo name from config: $vendo_name"
             else
                 vendo_name="PISOWIFI"
             fi
         fi
-
         debug_log "Final vendo_name: '$vendo_name'"
 
         title="🛜 ${vendo_name} - Vendo Update"
@@ -169,15 +237,9 @@ EOF
         elif printf "%s" "$new_lines" | grep -qi 'Trial Login'; then
             title="⌛ ${vendo_name} - Trial Login"
         else
-            today=$(date +%d-%m-%Y)
-            sales_today="0"
-            if [ -f "$SALES_FILE" ] && [ -r "$SALES_FILE" ]; then
-                sales_today=$(sed -n "s/.*\"$today\":\([0-9]\+\).*/\1/p" "$SALES_FILE")
-                [ -z "$sales_today" ] && sales_today="0"
-            else
-                system_log "Sales file not found: $SALES_FILE"
-            fi
-            sales_info="\\n💡 Total Sales Today: ₱ ${sales_today}.00"
+            # sales computation (main vs other)
+            get_sales_today
+            sales_info="\\n💡 Sales Today\\nMain: ₱ ${main_sales}.00\\nOther vendos: ₱ ${other_sales}.00"
         fi
 
         # NGROK info (if available)
@@ -206,6 +268,7 @@ EOF
     buffer=""
 }
 
+# ---------------- main loop setup ----------------
 current_id=""
 buffer=""
 last_time=$(date +%s)
@@ -221,7 +284,6 @@ if [ ! -p "$FIFO" ]; then
     rm -f "$FIFO" 2>/dev/null
     if ! mkfifo "$FIFO"; then
         system_log "ERROR: mkfifo failed, falling back to direct tail read"
-        # fallback: direct tail into while (less reliable on some busybox shells)
         tail -n0 -F "$LOGFILE" 2>/dev/null | while true; do sleep 60; done &
         TAIL_PID=$!
         system_log "Fallback tail started PID=$TAIL_PID"
@@ -232,16 +294,13 @@ else
     system_log "Using existing FIFO $FIFO"
 fi
 
-# start tail (only if FIFO was successfully created)
 if [ -p "$FIFO" ]; then
     tail -n0 -F "$LOGFILE" 2>/dev/null > "$FIFO" &
     TAIL_PID=$!
     system_log "tail -F started writing to fifo (PID=$TAIL_PID)"
 fi
 
-# safe cleanup: disable traps immediately to avoid recursion
 cleanup() {
-    # ignore further INT/TERM/EXIT while cleaning up
     trap '' INT TERM EXIT
     system_log "Caught termination, flushing buffer..."
     flush_buffer
@@ -255,14 +314,12 @@ cleanup() {
 }
 trap cleanup INT TERM EXIT
 
-# Main read loop: read with timeout so we wake when no input
 while true; do
     if read -t 1 -r line < "$FIFO"; then
         now=$(date +%s)
         id=$(echo "$line" | sed -n 's/.*ID: \([^ ]*\).*/\1/p')
         debug_log "New line: ${line:0:120}..., ID: $id"
 
-        # process line (same logic you already have for cleaning, buffering, id change)
         cleaned=$(echo "$line" | sed 's/^.* [0-9A-Za-z:]\{17\} //')
         if [ -z "$id" ]; then
             debug_log "No ID parsed from line; skipping"
@@ -286,7 +343,6 @@ while true; do
         last_time=$now
 
     else
-        # read timed out → no new line for 1s
         now=$(date +%s)
         if [ -n "$buffer" ]; then
             age=$((now - last_time))
