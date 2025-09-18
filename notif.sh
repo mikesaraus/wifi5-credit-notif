@@ -146,9 +146,20 @@ EOF
     buffer=""
 }
 
+# create fifo for tail -> read -t
+FIFO="/tmp/wifi5_logfifo"
+[ -p "$FIFO" ] || { rm -f "$FIFO" 2>/dev/null; mkfifo "$FIFO"; }
+
+# start tail in background writing into the fifo
+tail -n0 -F "$LOGFILE" 2>/dev/null > "$FIFO" &
+TAIL_PID=$!
+
+# ensure cleanup of tail and fifo
 cleanup() {
     system_log "Caught termination, flushing buffer..."
     flush_buffer
+    [ -n "$TAIL_PID" ] && kill "$TAIL_PID" 2>/dev/null
+    rm -f "$FIFO"
     exit 0
 }
 trap cleanup INT TERM EXIT
@@ -162,70 +173,63 @@ LOGFILE="$(get_logfile)"
 system_log "Initial logfile: $LOGFILE"
 system_log "Entering main loop"
 
-# MAIN loop: single read -t that works with busybox tail -F
-while :; do
-    if read -t 1 -r line < <(cat) 2>/dev/null; then
-        :
-    fi
-    # The above read through process substitution is only to satisfy shells that require a file descriptor.
-    # Instead, read directly from the tail FD by redirecting the tail below into this loop.
-    break
-done
+# Main read loop: read with timeout so we can check age even when no new lines arrive
+while true; do
+    if read -t 1 -r line < "$FIFO"; then
+        # We received a new line
+        now=$(date +%s)
+        id=$(echo "$line" | sed -n 's/.*ID: \([^ ]*\).*/\1/p')
+        debug_log "New line: ${line:0:120}..., ID: $id"
 
-# Start tail -F and feed into a controlled read loop
-tail -n0 -F "$LOGFILE" 2>/dev/null | \
-while IFS= read -r line; do
-    now=$(date +%s)
-    id=$(echo "$line" | sed -n 's/.*ID: \([^ ]*\).*/\1/p')
-    debug_log "New line: ${line:0:100}..., ID: $id"
+        ngrok_info=""
+        ngrok_url=$(wget -T 5 -qO- http://127.0.0.1:4040/api/tunnels 2>/dev/null \
+            | grep -o '"public_url":"[^"]*"' | cut -d'"' -f4 | head -n1)
+        if [ -n "$ngrok_url" ]; then
+            ngrok_info="\\n🔗 ${ngrok_url}"
+            debug_log "NGROK URL: $ngrok_url"
+        else
+            debug_log "NGROK not available"
+        fi
 
-    ngrok_info=""
-    ngrok_url=$(wget -T 5 -qO- http://127.0.0.1:4040/api/tunnels 2>/dev/null \
-        | grep -o '"public_url":"[^"]*"' | cut -d'"' -f4 | head -n1)
-    if [ -n "$ngrok_url" ]; then
-        ngrok_info="\\n🔗 ${ngrok_url}"
-        debug_log "NGROK URL: $ngrok_url"
-    else
-        debug_log "NGROK not available"
-    fi
+        cleaned=$(echo "$line" | sed 's/^.* [0-9A-Za-z:]\{17\} //')
 
-    # drop syslog timestamp prefix if present (same sed as before)
-    cleaned=$(echo "$line" | sed 's/^.* [0-9A-Za-z:]\{17\} //')
-    # If ID not present, skip (avoid setting empty current_id)
-    if [ -z "$id" ]; then
-        debug_log "No ID parsed from line; skipping"
-        continue
-    fi
+        if [ -z "$id" ]; then
+            debug_log "No ID parsed from line; skipping"
+            continue
+        fi
 
-    if [ -z "$current_id" ]; then
-        current_id="$id"
-        buffer="$cleaned"
-        system_log "New session started with ID: $current_id"
-    elif [ "$id" = "$current_id" ]; then
-        buffer="${buffer}\\n${cleaned}"
-        debug_log "Added to buffer for ID: $current_id"
-    else
-        system_log "ID changed from $current_id to $id, flushing buffer"
-        flush_buffer
-        current_id="$id"
-        buffer="$cleaned"
-    fi
-
-    last_time=$now
-
-    # non-blocking sleep loop to check inactivity/age while tail feeds lines,
-    # but we also check these after each line read to catch rare cases:
-    now=$(date +%s)
-    if [ -n "$buffer" ]; then
-        age=$((now - last_time))
-        if [ "$age" -ge "$MAX_BUFFER_AGE" ]; then
-            system_log "Max buffer age flush triggered"
+        if [ -z "$current_id" ]; then
+            current_id="$id"
+            buffer="$cleaned"
+            system_log "New session started with ID: $current_id"
+        elif [ "$id" = "$current_id" ]; then
+            buffer="${buffer}\\n${cleaned}"
+            debug_log "Added to buffer for ID: $current_id"
+        else
+            system_log "ID changed from $current_id to $id, flushing buffer"
             flush_buffer
-            current_id=""
-        elif [ "$age" -ge "$INACTIVITY" ]; then
-            system_log "Inactivity flush triggered"
-            flush_buffer
-            current_id=""
+            current_id="$id"
+            buffer="$cleaned"
+        fi
+
+        last_time=$now
+
+    else
+        # read timed out → no new line for 1 second. Check ages.
+        now=$(date +%s)
+        if [ -n "$buffer" ]; then
+            age=$((now - last_time))
+            if [ "$age" -ge "$MAX_BUFFER_AGE" ]; then
+                system_log "Max buffer age flush triggered (age=${age})"
+                flush_buffer
+                current_id=""
+                last_time=$(date +%s)
+            elif [ "$age" -ge "$INACTIVITY" ]; then
+                system_log "Inactivity flush triggered (age=${age})"
+                flush_buffer
+                current_id=""
+                last_time=$(date +%s)
+            fi
         fi
     fi
 done
