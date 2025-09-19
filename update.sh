@@ -1,77 +1,112 @@
 #!/bin/sh
 # Simple notif.sh updater with automatic service creation
+# Adds a 23:45 sendinfo cron and removes it on --clean
+# Works from any directory (dynamic path detection)
 
 SCRIPT_DIR="$(dirname "$(readlink -f "$0" 2>/dev/null || echo "$0")")"
 NOTIF="$SCRIPT_DIR/notif.sh"
 SERVICE_FILE="/etc/init.d/notif"
-CRON_JOB_CMD="$SERVICE_FILE restart"
-CRON_JOB="1 0 * * * $CRON_JOB_CMD"
 
-# Function to setup midnight restart cron job
-setup_cron_job() {
-    echo "Setting up midnight restart cron job..."
-    
-    # Check if cron job already exists
-    if crontab -l 2>/dev/null | grep -q "$CRON_JOB_CMD"; then
-        echo "Cron job already exists"
-        return 0
-    fi
-    
-    # Add cron job
-    (crontab -l 2>/dev/null; echo "$CRON_JOB") | crontab -
-    
-    if [ $? -eq 0 ]; then
-        echo "Midnight restart cron job added: $CRON_JOB"
-        return 0
-    else
-        echo "Failed to add cron job"
-        return 1
-    fi
+# Existing midnight restart cron (keeps previous behavior)
+CRON_RESTART_CMD="$SERVICE_FILE restart"
+CRON_RESTART="1 0 * * * $CRON_RESTART_CMD"
+
+# New sendinfo cron (23:45) — uses dynamic path to notif.sh
+SENDINFO_CRON_TIME="45 23 * * *"
+# Use absolute NOTIF path in the cron line; redirect to /dev/null
+SENDINFO_CRON="${SENDINFO_CRON_TIME} ${NOTIF} --action sendinfo >/dev/null 2>&1"
+
+# Helper: safely get current crontab (empty string if none)
+_current_cron() {
+    crontab -l 2>/dev/null || true
 }
 
-# Function to remove cron job
-remove_cron_job() {
-    echo "Removing cron job..."
-    if crontab -l 2>/dev/null | grep -q "$CRON_JOB_CMD"; then
-        crontab -l 2>/dev/null | grep -v "$CRON_JOB_CMD" | crontab -
-        echo "Cron job removed"
+# Function to setup cron jobs
+setup_cron_job() {
+    echo "Setting up cron jobs..."
+
+    existing="$(_current_cron)"
+
+    # Add restart cron if not present
+    if echo "$existing" | grep -Fq "$CRON_RESTART_CMD"; then
+        echo "Restart cron already exists"
     else
-        echo "No cron job found to remove"
+        echo "Adding restart cron: $CRON_RESTART"
+        (echo "$existing"; echo "$CRON_RESTART") | crontab -
     fi
+
+    # Refresh variable (in case crontab updated)
+    existing="$(_current_cron)"
+
+    # Add sendinfo cron if not present
+    # Use fixed-string match for the NOTIF path to avoid false positives
+    if echo "$existing" | grep -Fq "$NOTIF --action sendinfo"; then
+        echo "Sendinfo cron already exists"
+    else
+        echo "Adding sendinfo cron: $SENDINFO_CRON"
+        (echo "$existing"; echo "$SENDINFO_CRON") | crontab -
+    fi
+
+    echo "Cron setup done."
+}
+
+# Function to remove cron jobs
+remove_cron_job() {
+    echo "Removing cron jobs..."
+
+    existing="$(_current_cron)"
+
+    # If nothing in crontab, exit
+    if [ -z "$existing" ]; then
+        echo "No crontab for root; nothing to remove."
+        return 0
+    fi
+
+    # Remove lines containing the restart command
+    echo "$existing" | grep -vF "$CRON_RESTART_CMD" | grep -vF "$NOTIF --action sendinfo" | crontab -
+    echo "Cron jobs removed (if they existed)."
 }
 
 # Function to clean up service and cron job
 clean_service() {
     echo "=== Cleaning up notif service ==="
-    
+
     # Stop service if running
     if [ -f "$SERVICE_FILE" ]; then
         echo "Stopping notif service..."
-        "$SERVICE_FILE" stop 2>/dev/null
+        "$SERVICE_FILE" stop 2>/dev/null || true
     fi
-    
-    # Kill any remaining processes
-    echo "Killing any remaining notif processes..."
-    killall notif.sh 2>/dev/null && echo "Processes killed"
-    
+
+    # Kill any remaining processes by matching the exact NOTIF path
+    echo "Killing any remaining notif processes matching $NOTIF..."
+    # use pgrep -f if available, otherwise fallback to ps+grep
+    if command -v pgrep >/dev/null 2>&1; then
+        pids=$(pgrep -f "$NOTIF" || true)
+    else
+        pids="$(ps | grep "$NOTIF" | grep -v "grep" | awk '{print $1}')"
+    fi
+    for pid in $pids; do
+        [ -n "$pid" ] && kill "$pid" 2>/dev/null && echo "Killed PID $pid"
+    done
+
     # Disable service
     if [ -f "$SERVICE_FILE" ]; then
         echo "Disabling service..."
-        "$SERVICE_FILE" disable 2>/dev/null
+        "$SERVICE_FILE" disable 2>/dev/null || true
     fi
-    
+
     # Remove service file
     if [ -f "$SERVICE_FILE" ]; then
         rm -f "$SERVICE_FILE"
         echo "Removed service file: $SERVICE_FILE"
     fi
-    
+
     # Remove PID file
     rm -f /var/run/notif.pid 2>/dev/null && echo "Removed PID file"
-    
+
     # Remove cron job
     remove_cron_job
-    
+
     echo "Cleanup completed"
     exit 0
 }
@@ -179,9 +214,9 @@ status() {
 }
 EOF
 
-    # Update the path in the service file
+    # Update the path in the service file to use the dynamic NOTIF
     sed -i "s|/path/to/notif.sh|$NOTIF|g" "$SERVICE_FILE"
-    
+
     chmod +x "$SERVICE_FILE"
     echo "Service created at $SERVICE_FILE"
 }
@@ -220,5 +255,5 @@ if [ "$NO_CRON" -eq 1 ]; then
     echo "Update completed (without cron job)"
 else
     echo "Update completed"
-    echo "Cron job set: Daily restart at 00:01"
+    echo "Cron jobs ensured (restart at 00:01 and sendinfo at 23:45)"
 fi
