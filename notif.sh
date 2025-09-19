@@ -525,11 +525,12 @@ EOF
         local basefile="$WIFI5/base-id/$current_id"
         if [ -f "$basefile" ] && [ -r "$basefile" ]; then
             name=$(sed -n 's/.*"name":"\([^"]*\)".*/\1/p;q' "$basefile")
-            [ -n "$name" ] && user_info="Client: $name (U-$current_id)\\n"
+            [ -n "$name" ] && user_info="$name (U-$current_id)"
         else
             system_log "Basefile not found: $basefile"
         fi
-        [ -z "$user_info" ] && [ -n "$current_id" ] && user_info="Client: U-$current_id\\n"
+        [ -z "$user_info" ] && [ -n "$current_id" ] && user_info="U-$current_id"
+        user_info="👤 Client: ${user_info}"
 
         # Vendo Name / Profile extraction from logs
         profile=$(printf "%s" "$new_lines" \
