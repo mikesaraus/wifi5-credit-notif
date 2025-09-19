@@ -566,17 +566,18 @@ EOF
         else
             main_sales=$(get_sales_today --source main)
             other_sales=$(get_sales_today --source others)
-            sales_info="\\n💡 Sales Today\\nMain: ₱ ${main_sales}.00\\nSub Vendos: ₱ ${other_sales}.00"
+            sales_info="\\n💰 Sales Today\\nMain: ₱ ${main_sales}.00\\nSub Vendos: ₱ ${other_sales}.00"
         fi
 
         # NGROK info (if available)
-        ngrok_urls=$(get_ngrok_urls --proto both)
-        ngrok_info="\\n🔗 ${ngrok_urls}"
+        ngrok_http=$(get_ngrok_urls --proto http)
+        ngrok_ssh=$(get_ngrok_urls --proto tcp)
+        ngrok_info="\\n🚀 NGROK Info:\\n🔗 HTTP: ${ngrok_http}\\n💻 TCP: ${ngrok_ssh}\\n"
 
         # remove trailing literal \n
         trimmed=$(printf "%s" "$new_lines" | sed 's/\\n$//')
 
-        if send_telegram "${title}\\n${user_info}${trimmed}${sales_info}${ngrok_info}"; then
+        if send_telegram "${title}\\n${user_info}\\n------------------\\n${trimmed}${sales_info}${ngrok_info}"; then
             [ "$latest_ts" -gt 0 ] && last_sent_time_sec=$latest_ts
             system_log "Buffer flushed successfully"
         else
