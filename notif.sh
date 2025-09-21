@@ -66,7 +66,7 @@ get_ngrok_urls() {
     for port in 4040 4041; do
         tmp_ngrok="/tmp/.ngrokjson.$$.$port"
         tmp_urls="/tmp/.ngrokurls.$$.$port"
-        if wget -T 3 -qO "$tmp_ngrok" "http://127.0.0.1:$port/api/tunnels" 2>/dev/null; then
+        if wget -T 2 -qO "$tmp_ngrok" "http://127.0.0.1:$port/api/tunnels" 2>/dev/null; then
             # extract public_url values into a temp file (one per line)
             grep -o '"public_url":"[^"]*"' "$tmp_ngrok" 2>/dev/null | cut -d'"' -f4 > "$tmp_urls" 2>/dev/null
 
@@ -302,33 +302,51 @@ get_temperature() {
 }
 
 # Get CPU usage percentage (sample /proc/stat)
+# Uses /tmp/.cpu_prev for delta
 get_cpu_usage() {
-    # --- CPU usage (sample /proc/stat, portable) ---
-    cpu_stat1=$(head -n 1 /proc/stat 2>/dev/null || true)
-    sleep 1
-    cpu_stat2=$(head -n 1 /proc/stat 2>/dev/null || true)
+    prev_file="/tmp/.cpu_prev"
 
-    set -- $cpu_stat1
-    u1=${2:-0}; n1=${3:-0}; s1=${4:-0}; i1=${5:-0}; w1=${6:-0}; irq1=${7:-0}; soft1=${8:-0}; steal1=${9:-0}
-    set -- $cpu_stat2
-    u2=${2:-0}; n2=${3:-0}; s2=${4:-0}; i2=${5:-0}; w2=${6:-0}; irq2=${7:-0}; soft2=${8:-0}; steal2=${9:-0}
+    # read current cpu line
+    cpu_line=$(head -n 1 /proc/stat 2>/dev/null || true)
+    # split fields (skip "cpu")
+    set -- $cpu_line
+    cu=${2:-0}; cn=${3:-0}; cs=${4:-0}; ci=${5:-0}; cw=${6:-0}; cirq=${7:-0}; csoft=${8:-0}; csteal=${9:-0}
 
-    total1=$((u1 + n1 + s1 + i1 + w1 + irq1 + soft1 + steal1))
-    total2=$((u2 + n2 + s2 + i2 + w2 + irq2 + soft2 + steal2))
-    idle1=$((i1 + w1))
-    idle2=$((i2 + w2))
+    # compute totals
+    cur_total=$((cu + cn + cs + ci + cw + cirq + csoft + csteal))
+    cur_idle=$((ci + cw))
 
-    dt=$((total2 - total1))
-    didle=$((idle2 - idle1))
     cpu_usage_num="0.00"
-    if [ "$dt" -gt 0 ]; then
-        cpu_usage_num=$(awk -v dt="$dt" -v didle="$didle" 'BEGIN{ if (dt>0) printf "%.2f", (1 - (didle/dt))*100; else printf "0.00" }' 2>/dev/null)
-        case "$cpu_usage_num" in
-            ''|*[!0-9.]* ) cpu_usage_num="0.00" ;;
-        esac
+
+    if [ -f "$prev_file" ]; then
+        # read previous totals: "total idle"
+        read prev_total prev_idle < "$prev_file" 2>/dev/null || { prev_total=0; prev_idle=0; }
+
+        # ensure numeric defaults
+        prev_total=${prev_total:-0}; prev_idle=${prev_idle:-0}
+
+        dt=$((cur_total - prev_total))
+        didle=$((cur_idle - prev_idle))
+
+        if [ "$dt" -gt 0 ]; then
+            # compute percent (float) safely via awk
+            cpu_usage_num=$(awk -v dt="$dt" -v didle="$didle" 'BEGIN{ if (dt>0) printf "%.2f", (1 - (didle/dt))*100; else printf "0.00" }' 2>/dev/null)
+            # guard against weird output
+            case "$cpu_usage_num" in
+                ''|*[!0-9.]* ) cpu_usage_num="0.00" ;;
+            esac
+        else
+            cpu_usage_num="0.00"
+        fi
+    else
+        # no previous sample — store current and return 0.00%
+        cpu_usage_num="0.00"
     fi
-    cpu_usage="${cpu_usage_num}%"
-    printf "%s" "$cpu_usage"
+
+    # persist current totals for next invocation (best-effort)
+    printf "%s %s\n" "$cur_total" "$cur_idle" > "$prev_file" 2>/dev/null || true
+
+    printf "%s%%" "$cpu_usage_num"
     return 0
 }
 
@@ -409,16 +427,11 @@ send_telegram() {
     URL="https://api.telegram.org/bot${BOT_TOKEN}/sendMessage"
 
     system_log "Sending Telegram message: ${ENC:0:120}..."
-    for i in 1 2 3; do
-        if wget -T 10 -qO- --post-data="chat_id=${CHAT_ID}&text=${ENC}" "$URL" >/dev/null 2>&1; then
+        if wget -T 5 -qO- --post-data="chat_id=${CHAT_ID}&text=${ENC}" "$URL" >/dev/null 2>&1; then
             system_log "Message sent successfully"
             return 0
-        else
-            system_log "Send attempt $i failed"
-            sleep 2
         fi
-    done
-    system_log "All send attempts failed"
+    system_log "Failed to send message"
     return 1
 }
 
@@ -470,9 +483,9 @@ send_device_info() {
     ngrok_http=$(get_ngrok_urls --proto http)
     ngrok_ssh=$(get_ngrok_urls --proto tcp)
     # Sales today
-    main_sales=$(get_sales_today --source main)
-    other_sales=$(get_sales_today --source others)
-    total_sales=$((main_sales + other_sales))
+    main_sales=$(get_sales_today --source main 2>/dev/null || printf "%d" 0)
+    other_sales=$(get_sales_today --source others 2>/dev/null || printf "%d" 0)
+    total_sales=$(( (main_sales 2>/dev/null || echo 0) + (other_sales 2>/dev/null || echo 0) ))
     # --- compose message (no trailing newline in variables) ---
     msg="🛜 Vendo Update 🛜\\n"
     msg="${msg}------------------\\n"
