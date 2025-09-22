@@ -308,47 +308,43 @@ get_cpu_usage() {
 
     # read current cpu line
     cpu_line=$(head -n 1 /proc/stat 2>/dev/null || true)
-    # split fields (skip "cpu")
+    [ -z "$cpu_line" ] && { printf "0.00%%"; return 0; }
+
     set -- $cpu_line
     cu=${2:-0}; cn=${3:-0}; cs=${4:-0}; ci=${5:-0}; cw=${6:-0}; cirq=${7:-0}; csoft=${8:-0}; csteal=${9:-0}
 
-    # compute totals
+    # make sure all fields are numbers
+    for v in cu cn cs ci cw cirq csoft csteal; do
+        eval "val=\$$v"
+        case "$val" in
+            ''|*[!0-9]*) eval "$v=0" ;;
+        esac
+    done
+
     cur_total=$((cu + cn + cs + ci + cw + cirq + csoft + csteal))
     cur_idle=$((ci + cw))
 
     cpu_usage_num="0.00"
 
     if [ -f "$prev_file" ]; then
-        # read previous totals: "total idle"
         read prev_total prev_idle < "$prev_file" 2>/dev/null || { prev_total=0; prev_idle=0; }
-
-        # ensure numeric defaults
-        prev_total=${prev_total:-0}; prev_idle=${prev_idle:-0}
 
         dt=$((cur_total - prev_total))
         didle=$((cur_idle - prev_idle))
 
         if [ "$dt" -gt 0 ]; then
-            # compute percent (float) safely via awk
-            cpu_usage_num=$(awk -v dt="$dt" -v didle="$didle" 'BEGIN{ if (dt>0) printf "%.2f", (1 - (didle/dt))*100; else printf "0.00" }' 2>/dev/null)
-            # guard against weird output
-            case "$cpu_usage_num" in
-                ''|*[!0-9.]* ) cpu_usage_num="0.00" ;;
-            esac
-        else
-            cpu_usage_num="0.00"
+            cpu_usage_num=$(awk -v dt="$dt" -v didle="$didle" \
+                'BEGIN{ if (dt>0) printf "%.2f", (1 - (didle/dt))*100; else printf "0.00" }')
         fi
-    else
-        # no previous sample — store current and return 0.00%
-        cpu_usage_num="0.00"
     fi
 
-    # persist current totals for next invocation (best-effort)
+    # persist current for next call
     printf "%s %s\n" "$cur_total" "$cur_idle" > "$prev_file" 2>/dev/null || true
 
     printf "%s%%" "$cpu_usage_num"
     return 0
 }
+
 
 # Get RAM usage in MB used/total
 get_ram_info() {
@@ -427,10 +423,10 @@ send_telegram() {
     URL="https://api.telegram.org/bot${BOT_TOKEN}/sendMessage"
 
     system_log "Sending Telegram message: ${ENC:0:120}..."
-        if wget -T 5 -qO- --post-data="chat_id=${CHAT_ID}&text=${ENC}" "$URL" >/dev/null 2>&1; then
-            system_log "Message sent successfully"
-            return 0
-        fi
+    if wget -T 5 -qO- --post-data="chat_id=${CHAT_ID}&text=${ENC}" "$URL" >/dev/null 2>&1; then
+        system_log "Message sent successfully"
+        return 0
+    fi
     system_log "Failed to send message"
     return 1
 }
@@ -485,10 +481,12 @@ send_device_info() {
     # Sales today
     main_sales=$(get_sales_today --source main 2>/dev/null || printf "%d" 0)
     other_sales=$(get_sales_today --source others 2>/dev/null || printf "%d" 0)
-    total_sales=$(( (main_sales 2>/dev/null || echo 0) + (other_sales 2>/dev/null || echo 0) ))
+    total_sales=$((main_sales + other_sales))
     # --- compose message (no trailing newline in variables) ---
+    timestamp=$(date +"%A %b %d, %Y %I:%M:%S %p")
     msg="🛜 Vendo Update 🛜\\n"
     msg="${msg}------------------\\n"
+    msg="${msg}${timestamp}\\n"
     msg="${msg}Name: ${vendo_name}\\n"
     msg="${msg}Total Subvendo: ${sub_count}\\n"
     msg="${msg}Device: ${model}\\n"
