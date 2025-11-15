@@ -9,6 +9,7 @@ start() {
     TARGET_FILE="$TARGET_DIR/$(basename "$TARGET_FILE")"
 
     APPEND_SCRIPT=$(cat <<'EOF'
+    
 const script = document.createElement('script');
 script.src = '/html/script.js';
 document.body.appendChild(script);
